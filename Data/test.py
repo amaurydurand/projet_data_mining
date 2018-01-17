@@ -1,0 +1,12 @@
+import pandas as pd
+files = ["MaryleboneRoadTrafficSpeed2004.csv",
+         "MaryleboneRoadTrafficSpeed2005.csv",
+         "MaryleboneRoadTrafficSpeed2006.csv",
+         "MaryleboneRoadTrafficSpeed2007.csv"]
+for f in files:
+        df = pd.read_csv(f)
+        for i in range(len(df['AverageSpeed (km/h)'])):
+                st = df['AverageSpeed (km/h)'][i]
+                df['AverageSpeed (km/h)'][i] = float(st.replace(',', '.'))
+        df.to_csv(f, index=False)
+

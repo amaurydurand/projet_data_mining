@@ -1,113 +1,203 @@
 #vrai projet
+
+#Il faut trouver des valeur de traffic heures par heures ou journalier suffit
+
+
 rm(list=objects())
 install.packages("openair")
 install.packages("riem")
+install.packages("yarrr")
+install.packages("zoo")
+library(zoo)
+
+library(mgcv)
+library(mgcViz)
+library(tidyverse)
+library(caret)
 library(openair)
 library(readr)
 library(riem)
+library(gridExtra)
+library(yarrr)
+
+#librari des RF :
+library(ranger)
+library(rpart)
+library(tree)
+library(plotmo)
+library(rpart.plot)
+library(caret)
+library(party)
+library(randomForest)
+library(Rborist)
+library(magrittr)
+library(MASS)
+
 
 #importation des données sur site AURN :
 
-mydata<-importAURN(site="my1",year=2006,pollutant="all")
-anemometre  <- read_delim("~/Desktop/MaryleboneRoadSonic2006.csv/MaryleboneRoadSonic2006-Tableau 1.csv", 
-                            ";", escape_double = FALSE, locale = locale(decimal_mark = ","), 
-                            trim_ws = TRUE)
-Traffic <- read_delim("~/Desktop/MaryleboneRoadTrafficCount2006/MaryleboneRoadTrafficCount2006-Tableau 1.csv", 
-                                                       ";", escape_double = FALSE, trim_ws = TRUE)
-SpeedT <- read_delim("~/Desktop/MaryleboneRoadTrafficSpeed2006/MaryleboneRoadTrafficSpeed2006-Tableau 1.csv", 
-                                                       ";", escape_double = FALSE, locale = locale(decimal_mark = ","), 
-                                                       trim_ws = TRUE)
-weatherdata<- riem_measures("EGLC",date_start="2006-01-01",date_end="2006-12-31")
+# On importe les polluants du comté de Lewisham :
+mydata<-importAURN(site="LW1",year=c(2002,2003,2004,2005,2006),pollutant="o3") 
 
+#On importe les données de l'aéroport de Londres (2-3 km au nord est de LW) :
+EGLCweatherdata<- riem_measures("EGLC",date_start="2002-01-01",date_end="2006-12-31")
+
+
+#ouest de LONDRES (ouest de Londres) aéroport d'heathrow 20km environ
+EGLLweatherdata<- riem_measures("EGLL",date_start="2002-01-01",date_end="2006-12-31") #10min pour importer
+
+#sknt vitesse du vent en knots, drct= direction du vent à partir du nord, temp en fareneight
 #Ajustage de donnée
+EGLCweatherdata<-EGLCweatherdata[,c(1,2,5,6,7,8,9,11)]
+EGLLweatherdata<-EGLLweatherdata[,c(1,2,8,9)]#Dwpf = point de rosée Temperature in Fahrenheit, typically @ 2 meters , relh: Relative Humidity in %,alti: Pressure altimeter en pouces
+mydata<-mydata[,c(1,2)]# on prend l'o3 , moins de NA
 
-SpeedT<-SpeedT[,c(1:3)] # Heure par heure
-anemometre<-anemometre[,c(1,2,3,4)] # par quart d'heure
-anemometre<-anemometre[seq(1, 35040, 4),] # on passe en heure par heure
-Traffic$CLS1=Traffic$CLS1+Traffic$CLS2+Traffic$CLS3+Traffic$CLS4+Traffic$CLS5+Traffic$CLS6 #on cumule tous les types de véhicules# par heure
-Traffic<-Traffic[,c(1,2,3)] # on efface les autres colonnes
-weatherdata<-weatherdata[,c(1,2,6,7,11)] #Dwpf = point de rosée Temperature in Fahrenheit, typically @ 2 meters , relh: Relative Humidity in %,alti: Pressure altimeter en pouces
-mydata<-mydata[,c(1,4,9)]# on prend la particule pm2.5 et pm10
+#Definition de l'o3 :
+#L'ozone (O3) résulte ainsi de la transformation chimique de l'oxygène au contact d'oxydes d'azote et d'hydrocarbures, en présence de rayonnement ultra-violet
+#solaire et d'une température élevée. L'ozone ainsi que d'autres polluants photochimiques (les PAN ou nitrates de peroxyacétyle, aldéhydes, cétones...) constituent
+#le smog, ce nuage brunâtre qui stagne parfois au-dessus des grandes villes comme Paris.
 
-# Check le nombre de Na
+#La formation d'ozone nécessite un certain temps durant lequel les masses d'air se déplacent.
+#Ce qui explique pourquoi les niveaux d'ozone sont plus soutenus en zone rurale autour de la région parisienne 
+#que dans l'agglomération parisienne où leur précurseurs ont été produits.
+
+
+#On s'occupe de la variable Y (na et interpolation) 365*24*5+24
 summary(mydata)
-
-#on remplace les NA par la moyenne pour les particules (Y) :
-mydata$pm10[which(is.na(mydata$pm10))]=mean(mydata$pm10[!is.na(mydata$pm10)])
-mydata$pm2.5[which(is.na(mydata$pm2.5))]=mean(mydata$pm2.5[!is.na(mydata$pm2.5)])
-
-summary(anemometre)
-
-#on remplace les NA par la moyennes dans les variables anenometre (vitesse du vent, direction du vent et temperature) :
-#1800 NA a la base 
-
-anemometre$`WindSpeed(m/s)`[which(is.na(anemometre$`WindSpeed(m/s)`))]=mean(anemometre$`WindSpeed(m/s)`[!is.na(anemometre$`WindSpeed(m/s)`)])
-anemometre$`WindDirection(deg)`[which(is.na(anemometre$`WindDirection(deg)`))]=mean(anemometre$`WindDirection(deg)`[!is.na(anemometre$`WindDirection(deg)`)])
-anemometre$`Temperature (degC)`[which(is.na(anemometre$`Temperature (degC)`))]=mean(anemometre$`Temperature (degC)`[!is.na(anemometre$`Temperature (degC)`)]) 
-
-
-# On remplace les Na pour la densité du traffic :
-summary(Traffic)
-Traffic$CLS1[which(is.na(Traffic$CLS1))]=mean(Traffic$CLS1[!is.na(Traffic$CLS1)])
-Traffic<-Traffic$CLS1[which(Traffic$Lane=="MG1")]
-
-# On remplace les Na pour la vitesse du traffic :
-summary(SpeedT)
-SpeedT$`AverageSpeed (km/h)`[which(is.na(SpeedT$`AverageSpeed (km/h)`))]=mean(SpeedT$`AverageSpeed (km/h)`[!is.na(SpeedT$`AverageSpeed (km/h)`)])
-SpeedT<-SpeedT$`AverageSpeed (km/h)`[which(SpeedT$Lane=="MG1")] # Il manque le mois d'aout et septembre , 5 premier jour d'avril jusqu'au 6 eme a 16h(non inclus),13 au 20 decembre
+l9=approx(as.POSIXct(mydata$date),mydata$o3,method="linear",n=43824)
+ozone<-numeric()
+ozone<-c(l9$y[9:43789])
 
 
 
 #Interpolation de Weather data
-summary(weatherdata)
-head(weatherdata)
-
-
 par(mfrow=c(3,1))
-plot(weatherdata$valid,weatherdata$dwpf,col="red",type="l")
-plot(weatherdata$valid,weatherdata$relh,col="blue",type="l")
-plot(weatherdata$valid,weatherdata$alti,col="green",type="l")
-#NOA : ce que le prof a dit mais je sais plus pk :)
+plot(EGLCweatherdata$valid,EGLCweatherdata$dwpf,col="red",type="l")
+plot(EGLCweatherdata$valid,EGLCweatherdata$relh,col="blue",type="l")
+plot(EGLCweatherdata$valid,EGLCweatherdata$alti,col="green",type="l")
+
 
 
 #Point de Rosée (Fareneight) :
-#on prend des points equiréparties entre 11h20 du 1 er janvier et le 31 decembre minuit (365*24*6-11*6-2-11*6-1)
-l=approx(as.POSIXct(weatherdata$valid),weatherdata$dwpf,method="linear",n=52425)
-
-a=mean(weatherdata$dwpf[1:10])
-b=mean(weatherdata$dwpf[9445:9453])# moyenne locale
+#on prend des points equiréparties entre 7h20 du 1 er janvier2002 et le 30 midi 50 (365*24*6*5+24*6-7*6-2-11*6-1-24*6)
+l=approx(as.POSIXct(EGLCweatherdata$valid),EGLCweatherdata$dwpf,method="linear",n=262689)
 RoseP<-numeric()
-Z<-numeric()
-W<-numeric()
-W[1:12]=a
-Z[1:11]=b
-RoseP=c(W,l$y[seq(5,52425,6)],Z) # le vecteur des points de rosée fini
-
-# %d'humudité :
-l2=approx(as.POSIXct(weatherdata$valid),weatherdata$relh,method="linear",n=52425)
-a2=mean(weatherdata$relh[1:10])
-b2=mean(weatherdata$relh[9445:9453])
-
+RoseP=c(l$y[seq(5,262689,6)]) # le vecteur des points de rosée fini
+################################################
+#### %d'humudité :
+l2=approx(as.POSIXct(EGLCweatherdata$valid),EGLCweatherdata$relh,method="linear",n=262689)
 Humi<-numeric()
-Z2<-numeric()
-W2<-numeric()
-W2[1:12]=a2
-Z2[1:11]=b2
-Humi=c(W2,l2$y[seq(5,52425,6)],Z2) # Vecteur fini de l'humidité
-
-# Pressure Altimetre
-l3=approx(as.POSIXct(weatherdata$valid),weatherdata$alti,method="linear",n=52425)
-a3=mean(weatherdata$alti[1:10])
-b3=mean(weatherdata$alti[9445:9453])
-
+Humi=c(l2$y[seq(5,262689,6)]) # Vecteur fini de l'humidité
+#######################################################
+###### Pressure Altimetre
+l3=approx(as.POSIXct(EGLCweatherdata$valid),EGLCweatherdata$alti,method="linear",n=262689)
 Pression<-numeric()
-Z3<-numeric()
-W3<-numeric()
-W3[1:12]=a3
-Z3[1:11]=b3
-Pression=c(W3,l3$y[seq(5,52425,6)],Z3)
+Pression=c(l3$y[seq(5,262689,6)])
+######################################################
+
+#####Température : 
+l4=approx(as.POSIXct(EGLCweatherdata$valid),EGLCweatherdata$tmpf,method="linear",n=262689)
+Temperature<-numeric()
+Temperature=c(l4$y[seq(5,262689,6)])
+
+#######################################################
+
+###### Vitesse du vent :
+l5=approx(as.POSIXct(EGLCweatherdata$valid),EGLCweatherdata$sknt,method="linear",n=262689)
+VitesseV<-numeric()
+VitesseV=c(l5$y[seq(5,262689,6)])
+######################################################
 
 
-#Création du dataframe nettoyé :
-PP<-data.frame(anemometre$`Date&Time`,mydata$pm2.5,mydata$pm10,anemometre$`WindSpeed(m/s)`,anemometre$`WindDirection(deg)`,anemometre$`Temperature (degC)`,Pression,Humi,RoseP)
-names(PP)<-c("Dates/heures(UTC/GMT )","particule pm2.5 (Y1)","particule pm10(Y2)","WVitesse(X1)","WDirection(X2)","Temperature(X3)","Pression(X4)","humidité(X5)","Point de rosée(X6)")
+###### Direction du Vent :
+l6=approx(as.POSIXct(EGLCweatherdata$valid),EGLCweatherdata$drct,method="linear",n=262689)
+DirectionV<-numeric()
+DirectionV=c(l6$y[seq(5,262689,6)])
+#####################################################
+
+###########################################
+#Direction du vent Heathrow :365*24*6*5+24*6-8-24*6-1
+summary(EGLLweatherdata)
+l7=approx(as.POSIXct(EGLLweatherdata$valid),EGLLweatherdata$drct,method="linear",n=262791)
+DirectionV2<-numeric()
+DirectionV2=c(l7$y[seq(5,262791,6)])
+DirectionV2<-DirectionV2[7:43787]
+############################################
+
+###########################################
+#Vitesse du vent Heathrow :365*24*6*5-8-24*6-1
+l8=approx(as.POSIXct(EGLLweatherdata$valid),EGLLweatherdata$sknt,method="linear",n=262791)
+VitesseV2<-numeric()
+VitesseV2=c(l8$y[seq(5,262791,6)])
+VitesseV2<-VitesseV2[7:43787]
+
+##########################################
+
+
+#Création du dataframe nettoyé : 1km/h=0.5399 noeuds, 89F=31 C , 26.85=-3C, 
+PP<-data.frame(mydata$date[9:43789],ozone,VitesseV,DirectionV,VitesseV2,DirectionV2,Temperature,Pression,Humi,RoseP)
+names(PP)<-c("Dates","Ozone","WVitesseNE","WDirectionNE","WVitesseO","WDirectionO","Temperature","Pression","humidite","Point_de_rosee")
+
+##################################################
+#On regarde les valeurs aberrantes à la main :
+
+plot(PP$WVitesseO)
+for (i in 1:43781){
+  if (PP$WVitesseO[i] >60){PP$WVitesseO[i]<-median(PP$WVitesseO)}
+}
+#################################################
+
+
+########################################################################################
+remove(c,mydata,weatherdata1,weatherdata2,a,l9,ozone,a2,a3,a4,a5,a6,a7,a8,b,b2,b3,b4,b5,b6,DirectionV,DirectionV2,Humi,i,l,l2,l3,l4,l5,l6,l7,l8,Pression,RoseP,Speed,Temperature,Traff,VitesseV,VitesseV2,W,W2,W3,W4,W5,W6,W7,W8,Z,Z2,Z3,Z4,Z5,Z6)
+
+######################
+#Extraction de la matrice de test et de validation :
+PPtraining<-PP[1:35056,]
+PPtest<-PP[35056:43781,]
+
+######################
+
+############################
+#Mesures d'erreurs :
+rmse<-function(eps)
+{
+  return(round(sqrt(mean(eps^2,na.rm=TRUE)),digits=0))
+}
+
+mape<-function(y,ychap)
+{
+  return(round(100*mean(abs(y-ychap)/abs(y)),digits=10))
+}
+################################
+################################
+#Bagging 
+eq <- Ozone ~ WVitesseNE +WDirectionNE+WVitesseO+WDirectionO+Temperature+Pression+humidite+Point_de_rosee
+rpart0<-rpart(eq, data= PPtraining,control=c(maxsurrogate=6))
+rpart0.forecast<-predict(rpart0,newdata=PPtest)
+mape(PPtest$Ozone,PPtest$Ozone)
+rmse(PPtest$Ozone-rpart0.forecast)
+plot(PPtest$Ozone)
+lines(rpart0.forecast,col="blue")
+
+
+
+
+
+
+####################################
+#Random Forest :
+eq <- Ozone ~ WVitesseNE +WDirectionNE+WVitesseO+WDirectionO+Temperature+Pression+humidite+Point_de_rosee 
+rf0 <- randomForest(eq,ntree=200,data=PP, importance=TRUE)
+rf0.fitted <- predict(rf0,newdata=PP)
+rf0.forecast <- predict(rf0,newdata=PP)
+rmse(PP$Ozone-rf0.fitted)
+mape(PP$Ozone,rf0.forecast)
+imp <- importance(rf0, type = 1, scale=T)
+varImpPlot(rf0, type=1)
+rf0$importance # montre l'importance des variables
+names(rf0)
+plot(rf0$mse)
+
+rf0$ntree
+plot(rf0)  ###oob error
